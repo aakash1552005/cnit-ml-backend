@@ -6,7 +6,7 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)
 
-# ── SimpleForecaster must be defined BEFORE loading pkl files ──
+# ── SimpleForecaster defined here ──
 class SimpleForecaster:
     def fit(self, counts):
         self.counts = counts
@@ -18,19 +18,20 @@ class SimpleForecaster:
         x_future = np.arange(n, n + steps)
         return np.maximum(0, np.polyval(self.coeffs, x_future)).astype(int).tolist()
 
-# ── Load models ──
+# ── Pre-built forecasters (no pkl needed) ──
+HIGH_COUNTS = [120,115,108,100,95,90,85,82,78,74,71,68,66,62,58,54,50,46]
+MED_COUNTS  = [820,810,800,790,780,770,760,750,745,735,728,722,719,710,700,690,680,670]
+fc_high = SimpleForecaster().fit(HIGH_COUNTS)
+fc_med  = SimpleForecaster().fit(MED_COUNTS)
+
+# ── Load only ML models (not forecaster pkl) ──
 BASE = os.path.dirname(__file__)
 risk_model   = joblib.load(os.path.join(BASE, 'models/risk_model.pkl'))
 def_model    = joblib.load(os.path.join(BASE, 'models/deficiency_model.pkl'))
 district_enc = joblib.load(os.path.join(BASE, 'models/district_encoder.pkl'))
-fc_high      = joblib.load(os.path.join(BASE, 'models/prophet_high.pkl'))
-fc_med       = joblib.load(os.path.join(BASE, 'models/prophet_med.pkl'))
 
-DISTRICTS   = ['Bengaluru Urban','Mysuru','Kalaburagi','Belagavi','Tumakuru','Shivamogga','Dharwad','Ballari','Raichur','Vijayapura']
 RISK_LABELS = ['Low', 'Medium', 'High']
 DEF_LABELS  = ['vitamin_a','iron','underweight','wasting','stunting']
-RISK_FEATURES = ['age_months','gender','district_enc','mother_edu','income_level','scheme_enrolled','weight_kg','height_cm','bmi','waz','haz','whz','vitamin_a','iron','underweight','wasting','stunting']
-DEF_FEATURES  = ['age_months','gender','district_enc','mother_edu','income_level','scheme_enrolled','weight_kg','height_cm','bmi','waz','haz','whz']
 
 def encode_district(d):
     try:
@@ -57,9 +58,9 @@ def predict_risk():
     try:
         d = request.json
         bmi, waz, haz, whz = compute_scores(d)
-        dist_enc = encode_district(d.get('district','Kalaburagi'))
         X = np.array([[
-            float(d.get('age_months',24)), int(d.get('gender',0)), dist_enc,
+            float(d.get('age_months',24)), int(d.get('gender',0)),
+            encode_district(d.get('district','Kalaburagi')),
             int(d.get('mother_edu',1)), int(d.get('income_level',1)),
             int(d.get('scheme_enrolled',0)),
             float(d.get('weight_kg',10)), float(d.get('height_cm',80)),
@@ -83,9 +84,9 @@ def predict_deficiency():
     try:
         d = request.json
         bmi, waz, haz, whz = compute_scores(d)
-        dist_enc = encode_district(d.get('district','Kalaburagi'))
         X = np.array([[
-            float(d.get('age_months',24)), int(d.get('gender',0)), dist_enc,
+            float(d.get('age_months',24)), int(d.get('gender',0)),
+            encode_district(d.get('district','Kalaburagi')),
             int(d.get('mother_edu',1)), int(d.get('income_level',1)),
             int(d.get('scheme_enrolled',0)),
             float(d.get('weight_kg',10)), float(d.get('height_cm',80)),
@@ -107,9 +108,9 @@ def predict_batch():
         results = []
         for c in children:
             bmi, waz, haz, whz = compute_scores(c)
-            dist_enc = encode_district(c.get('district','Kalaburagi'))
             X = np.array([[
-                float(c.get('age_months',24)), int(c.get('gender',0)), dist_enc,
+                float(c.get('age_months',24)), int(c.get('gender',0)),
+                encode_district(c.get('district','Kalaburagi')),
                 int(c.get('mother_edu',1)), int(c.get('income_level',1)),
                 int(c.get('scheme_enrolled',0)),
                 float(c.get('weight_kg',10)), float(c.get('height_cm',80)),
@@ -131,20 +132,11 @@ def predict_batch():
 
 @app.route('/forecast', methods=['GET'])
 def forecast():
-    try:
-        months_labels = ['Jul','Aug','Sep','Oct','Nov','Dec']
-        high_vals = fc_high.predict(6)
-        med_vals  = fc_med.predict(6)
-        result = []
-        for i in range(6):
-            result.append({
-                'month': months_labels[i],
-                'high_predicted': high_vals[i],
-                'medium_predicted': med_vals[i],
-            })
-        return jsonify({'forecast': result, 'model':'SimpleForecaster','confidence':89,'generated_at':datetime.utcnow().isoformat()})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    months = ['Jul','Aug','Sep','Oct','Nov','Dec']
+    high_vals = fc_high.predict(6)
+    med_vals  = fc_med.predict(6)
+    result = [{'month': months[i], 'high_predicted': high_vals[i], 'medium_predicted': med_vals[i]} for i in range(6)]
+    return jsonify({'forecast': result, 'model':'SimpleForecaster','confidence':89,'generated_at':datetime.utcnow().isoformat()})
 
 @app.route('/insights', methods=['GET'])
 def insights():
@@ -158,7 +150,6 @@ def insights():
             {'feature':'scheme_enrolled','importance':0.10}
         ],
         'models_active': 6,
-        'total_predictions': 5000,
         'generated_at': datetime.utcnow().isoformat()
     })
 
